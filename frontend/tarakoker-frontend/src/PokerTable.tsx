@@ -64,6 +64,23 @@ const PokerTable: React.FC = () => {
     const dealCards = () => {
         socket.emit("deal");
     };
+	
+	const placeBet = (amount: number) => {
+		socket.emit("bet", amount);
+	};
+
+	const fold = () => {
+		socket.emit("fold");
+	};
+
+	const call = () => {
+		socket.emit("call");
+	};
+
+	const raise = (amount: number) => {
+		socket.emit("raise", amount);
+	};
+
 
     return (
         <div className="poker-table">
@@ -106,10 +123,11 @@ const PokerTable: React.FC = () => {
                         ))}
                     </div>
                     <div className="betting-panel">
-                        <button onClick={dealCards}>Deal Cards</button>
-                        <button onClick={() => socket.emit("bet", 10)}>Bet $10</button>
-                        <button onClick={() => socket.emit("fold")}>Fold</button>
-                    </div>
+						<button onClick={() => placeBet(10)}>Bet $10</button>
+						<button onClick={call}>Call</button>
+						<button onClick={() => raise(20)}>Raise $20</button>
+						<button onClick={fold}>Fold</button>
+					</div>
                 </>
             )}
         </div>
