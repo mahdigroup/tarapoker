@@ -4,14 +4,17 @@ const { Server } = require("socket.io");
 const dotenv = require("dotenv");
 const cors = require("cors");
 
+// Load environment variables
 dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
 
-app.use(cors({
-    origin: "http://localhost:5173",
-}));
+app.use(
+    cors({
+        origin: "http://localhost:5173",
+    })
+);
 
 const io = new Server(server, {
     cors: {
@@ -33,6 +36,7 @@ let gameState = {
 // Additional variables for gameplay
 let currentBet = 0;
 let activePlayers = [];
+let handsDealt = false;
 
 // Player actions
 const ACTIONS = {
@@ -41,14 +45,13 @@ const ACTIONS = {
     FOLD: "fold",
     CALL: "call",
     RAISE: "raise",
+    DEAL: "deal",
 };
 
 // Utility to create and shuffle a deck
 const createDeck = () => {
     const suits = ["♠", "♥", "♦", "♣"];
-    const ranks = [
-        "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A",
-    ];
+    const ranks = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
     const deck = [];
     suits.forEach((suit) => {
         ranks.forEach((rank) => {
@@ -62,106 +65,129 @@ const createDeck = () => {
 let deck = [];
 let playerHands = {};
 
-// Initialize game state
+// Reset the game state
 const resetGame = () => {
-    deck = createDeck();
+    deck = createDeck(); // Create a new shuffled deck
     gameState.communityCards = [];
     playerHands = {};
-    activePlayers = [...gameState.players.map((p) => p.id)];
-    gameState.players.forEach((player) => {
-        playerHands[player.id] = [deck.pop(), deck.pop()]; // Deal two cards
-    });
+    handsDealt = false;
+    activePlayers = [];
+    gameState.players = [];
     gameState.pot = 0;
     currentBet = 0;
-    gameState.currentPlayer = gameState.players[0]?.id || null;
+    gameState.currentPlayer = null;
+    console.log("Game has been reset.");
 };
 
-// Determine the winner (simple: last active player wins)
-const determineWinner = () => {
-    if (activePlayers.length === 1) {
-        const winner = gameState.players.find((p) => p.id === activePlayers[0]);
-        if (winner) {
-            winner.chips += gameState.pot;
-            gameState.pot = 0;
-            console.log(`${winner.name} wins the pot!`);
-            resetGame(); // Reset the game for the next round
-            io.emit("gameState", { ...gameState, playerHands });
+// Reset players' current bets
+const resetPlayerBets = () => {
+    gameState.players.forEach((player) => {
+        player.currentBet = 0;
+    });
+};
+
+// Helper function to filter game state per player
+const getFilteredGameState = (socketId) => {
+    const filteredPlayerHands = {};
+    Object.keys(playerHands).forEach((id) => {
+        if (id === socketId) {
+            filteredPlayerHands[id] = playerHands[id];
         }
-    }
+    });
+
+    return { ...gameState, playerHands: filteredPlayerHands };
 };
 
-// Handle socket connections
+// Emit game state to each player individually
+const broadcastGameState = () => {
+    gameState.players.forEach((player) => {
+        const filteredState = {
+            ...gameState,
+            playerHands: { [player.id]: playerHands[player.id] || [] },
+        };
+        console.log(`Broadcasting to ${player.name}:`, filteredState); // Debug
+        io.to(player.id).emit("gameState", filteredState);
+    });
+};
+
+// Import action handlers
+const betAction = require("./actions/bet");
+const foldAction = require("./actions/fold");
+const callAction = require("./actions/call");
+const raiseAction = require("./actions/raise");
+
 io.on("connection", (socket) => {
     console.log("A user connected:", socket.id);
 
-    // Player joins the game
+    // Handle player joining the game
     socket.on(ACTIONS.JOIN, (playerName) => {
         if (gameState.players.length < 6) { // Limit to 6 players
-            gameState.players.push({
+            const newPlayer = {
                 id: socket.id,
-                name: playerName,
-                chips: 1000, // Starting chips
-            });
-            if (gameState.players.length === 1) resetGame(); // Reset the game when the first player joins
-            io.emit("gameState", { ...gameState, playerHands });
+                name: playerName || `Player-${gameState.players.length + 1}`,
+                chips: 1000,
+                currentBet: 0,
+                folded: false,
+            };
+            gameState.players.push(newPlayer);
+            activePlayers.push(socket.id);
             console.log(`${playerName} joined the game`);
+            broadcastGameState();
         } else {
             socket.emit("error", "Game is full");
         }
     });
 
-    // Player places a bet
+    // Attach action handlers
     socket.on(ACTIONS.BET, (amount) => {
-        const player = gameState.players.find((p) => p.id === socket.id);
-        if (player && amount >= currentBet) {
-            player.chips -= amount;
-            gameState.pot += amount;
-            currentBet = amount; // Update the current bet
-            io.emit("gameState", gameState);
-        }
+        betAction(socket, gameState, broadcastGameState)(amount);
     });
 
-    // Player folds
     socket.on(ACTIONS.FOLD, () => {
-        activePlayers = activePlayers.filter((id) => id !== socket.id); // Remove player from active players
-        io.emit("gameState", gameState);
-
-        if (activePlayers.length === 1) {
-            determineWinner(); // Determine the winner when only one player is left
-        }
+        foldAction(socket, gameState, broadcastGameState)();
     });
 
-    // Player calls
     socket.on(ACTIONS.CALL, () => {
-        const player = gameState.players.find((p) => p.id === socket.id);
-        if (player) {
-            const difference = currentBet; // Amount to match the current bet
-            player.chips -= difference;
-            gameState.pot += difference;
-            io.emit("gameState", gameState);
-        }
+        callAction(socket, gameState, broadcastGameState)();
     });
 
-    // Player raises
-    socket.on(ACTIONS.RAISE, (raiseAmount) => {
-        const player = gameState.players.find((p) => p.id === socket.id);
-        if (player && raiseAmount > currentBet) {
-            player.chips -= raiseAmount;
-            gameState.pot += raiseAmount;
-            currentBet = raiseAmount; // Update the current bet
-            io.emit("gameState", gameState);
-        }
+    socket.on(ACTIONS.RAISE, (amount) => {
+        raiseAction(socket, gameState, broadcastGameState)(amount);
     });
 
-    // Player disconnects
+    // Handle deal action
+    socket.on(ACTIONS.DEAL, () => {
+        if (deck.length === 0) deck = createDeck(); // Initialize deck if needed
+
+        if (!handsDealt) {
+            gameState.players.forEach((player) => {
+                playerHands[player.id] = [deck.pop(), deck.pop()];
+            });
+            handsDealt = true; // Mark that hands have been dealt
+        }
+
+        if (gameState.communityCards.length < 5) {
+            const numCards =
+                gameState.communityCards.length === 0 ? 3 : 1; // Deal 3 cards for flop, 1 for turn/river
+            for (let i = 0; i < numCards; i++) {
+                gameState.communityCards.push(deck.pop());
+            }
+        }
+
+        broadcastGameState();
+    });
+
+    // Handle player disconnect
     socket.on("disconnect", () => {
         gameState.players = gameState.players.filter((p) => p.id !== socket.id);
         activePlayers = activePlayers.filter((id) => id !== socket.id);
-        io.emit("gameState", gameState);
-        console.log("A user disconnected:", socket.id);
+        console.log(`A player disconnected: ${socket.id}`);
 
-        if (activePlayers.length === 1) {
-            determineWinner();
+        if (activePlayers.length === 0) {
+            console.log("All players have left. Resetting game state...");
+            resetGame();
+        } else {
+            broadcastGameState();
         }
     });
 });

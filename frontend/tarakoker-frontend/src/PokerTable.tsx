@@ -7,6 +7,7 @@ interface Player {
     id: string;
     name: string;
     chips: number;
+    folded?: boolean;
 }
 
 interface GameState {
@@ -30,26 +31,31 @@ const PokerTable: React.FC = () => {
     const [playerHand, setPlayerHand] = useState<string[]>([]);
     const [errorMessage, setErrorMessage] = useState<string>("");
 
-    useEffect(() => {
-        // Listen for game state updates
-        socket.on("gameState", (state: GameState) => {
-            setGameState(state);
-            if (state.playerHands && state.playerHands[socket.id]) {
-                setPlayerHand(state.playerHands[socket.id]);
-            }
-        });
+	useEffect(() => {
+		// Listen for game state updates
+		socket.on("gameState", (state: GameState) => {
+			console.log("Received game state:", state);
+			setGameState(state);
 
-        // Handle server errors
-        socket.on("error", (message: string) => {
-            setErrorMessage(message);
-        });
+			if (state.playerHands && state.playerHands[socket.id]) {
+				console.log("Updating player hand:", state.playerHands[socket.id]);
+				setPlayerHand(state.playerHands[socket.id]);
+			}
+		});
 
-        return () => {
-            // Clean up socket listeners on component unmount
-            socket.off("gameState");
-            socket.off("error");
-        };
-    }, []);
+		// Handle server errors
+		socket.on("error", (message: string) => {
+			setErrorMessage(message);
+		});
+
+		return () => {
+			socket.off("gameState");
+			socket.off("error");
+		};
+	}, []);
+
+
+	
 
     const joinGame = () => {
         if (playerName.trim()) {
@@ -64,23 +70,22 @@ const PokerTable: React.FC = () => {
     const dealCards = () => {
         socket.emit("deal");
     };
-	
-	const placeBet = (amount: number) => {
-		socket.emit("bet", amount);
-	};
 
-	const fold = () => {
-		socket.emit("fold");
-	};
+    const placeBet = (amount: number) => {
+        socket.emit("bet", amount);
+    };
 
-	const call = () => {
-		socket.emit("call");
-	};
+    const fold = () => {
+        socket.emit("fold");
+    };
 
-	const raise = (amount: number) => {
-		socket.emit("raise", amount);
-	};
+    const call = () => {
+        socket.emit("call");
+    };
 
+    const raise = (amount: number) => {
+        socket.emit("raise", amount);
+    };
 
     return (
         <div className="poker-table">
@@ -117,17 +122,23 @@ const PokerTable: React.FC = () => {
                     </div>
                     <div className="players">
                         {gameState.players.map((player) => (
-                            <div className="player" key={player.id}>
-                                {player.name} (${player.chips})
+                            <div
+                                className={`player ${player.folded ? "folded" : ""}`} // Add "folded" class
+                                key={player.id}
+                            >
+                                <span>
+                                    {player.name} ({player.folded ? "Folded" : `$${player.chips}`})
+                                </span>
                             </div>
                         ))}
                     </div>
                     <div className="betting-panel">
-						<button onClick={() => placeBet(10)}>Bet $10</button>
-						<button onClick={call}>Call</button>
-						<button onClick={() => raise(20)}>Raise $20</button>
-						<button onClick={fold}>Fold</button>
-					</div>
+                        <button onClick={() => placeBet(10)}>Bet $10</button>
+                        <button onClick={call}>Call</button>
+                        <button onClick={() => raise(20)}>Raise $20</button>
+                        <button onClick={fold}>Fold</button>
+                        <button onClick={dealCards}>Deal Cards</button>
+                    </div>
                 </>
             )}
         </div>
