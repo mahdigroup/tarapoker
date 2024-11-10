@@ -192,6 +192,142 @@ io.on("connection", (socket) => {
     });
 });
 
+
+// Function to move to the next player
+const moveToNextPlayer = () => {
+    const currentIndex = gameState.players.findIndex((p) => p.id === gameState.currentPlayer);
+    let nextIndex = (currentIndex + 1) % gameState.players.length;
+
+    while (
+        gameState.players[nextIndex].folded || 
+        gameState.players[nextIndex].chips <= 0
+    ) {
+        nextIndex = (nextIndex + 1) % gameState.players.length;
+
+        // If we loop back to the current player, the round is over
+        if (nextIndex === currentIndex) {
+            console.log("All players have acted. Proceeding to the next stage.");
+            return false; // Indicate the round is complete
+        }
+    }
+
+    gameState.currentPlayer = gameState.players[nextIndex].id;
+    console.log(`Next turn: ${gameState.players[nextIndex].name}`);
+    return true;
+};
+
+// Enforce player turn
+const enforceTurn = (socket, action) => {
+    if (socket.id !== gameState.currentPlayer) {
+        socket.emit("error", "It's not your turn!");
+        return false;
+    }
+    return true;
+};
+
+// Handle player actions
+io.on("connection", (socket) => {
+    console.log("A user connected:", socket.id);
+
+    socket.on(ACTIONS.JOIN, (playerName) => {
+        if (gameState.players.length < 6) {
+            const newPlayer = {
+                id: socket.id,
+                name: playerName || `Player-${gameState.players.length + 1}`,
+                chips: 1000,
+                currentBet: 0,
+                folded: false,
+            };
+            gameState.players.push(newPlayer);
+            activePlayers.push(socket.id);
+            console.log(`${newPlayer.name} joined the game.`);
+
+            // Set the first player to act if the game hasn't started
+            if (!gameState.currentPlayer) {
+                gameState.currentPlayer = newPlayer.id;
+            }
+
+            broadcastGameState();
+        } else {
+            socket.emit("error", "Game is full.");
+        }
+    });
+
+    socket.on(ACTIONS.BET, (amount) => {
+        if (!enforceTurn(socket, ACTIONS.BET)) return;
+
+        // Handle bet logic here...
+
+        if (moveToNextPlayer()) {
+            broadcastGameState();
+        } else {
+            console.log("Betting round complete.");
+            // Proceed to the next stage of the game...
+        }
+    });
+
+    socket.on(ACTIONS.CALL, () => {
+        if (!enforceTurn(socket, ACTIONS.CALL)) return;
+
+        // Handle call logic here...
+
+        if (moveToNextPlayer()) {
+            broadcastGameState();
+        } else {
+            console.log("Betting round complete.");
+            // Proceed to the next stage of the game...
+        }
+    });
+
+    socket.on(ACTIONS.FOLD, () => {
+        if (!enforceTurn(socket, ACTIONS.FOLD)) return;
+
+        const player = gameState.players.find((p) => p.id === socket.id);
+        if (player) {
+            player.folded = true;
+            console.log(`${player.name} folded.`);
+        }
+
+        if (moveToNextPlayer()) {
+            broadcastGameState();
+        } else {
+            console.log("Betting round complete.");
+            // Proceed to the next stage of the game...
+        }
+    });
+
+    socket.on(ACTIONS.RAISE, (amount) => {
+        if (!enforceTurn(socket, ACTIONS.RAISE)) return;
+
+        // Handle raise logic here...
+
+        if (moveToNextPlayer()) {
+            broadcastGameState();
+        } else {
+            console.log("Betting round complete.");
+            // Proceed to the next stage of the game...
+        }
+    });
+
+    socket.on("disconnect", () => {
+        gameState.players = gameState.players.filter((p) => p.id !== socket.id);
+        activePlayers = activePlayers.filter((id) => id !== socket.id);
+        console.log(`A player disconnected: ${socket.id}`);
+
+        if (activePlayers.length === 0) {
+            console.log("All players have left. Resetting game state...");
+            resetGame();
+        } else {
+            if (socket.id === gameState.currentPlayer) {
+                moveToNextPlayer();
+            }
+            broadcastGameState();
+        }
+    });
+});
+
+
+
 // Start the server
 server.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
